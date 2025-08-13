@@ -13,7 +13,7 @@ A “Clear All Accounts” link is available below the Add Account block. Clicki
 
 Each account row includes a small “Delete” link (shown to the right of the account name) so users can remove that account without clearing all data.
 
-A  built-in HMAC-SHA1 (byte-accurate, RFC-style) is used to calculate the code from a shared secret (ie. not web API calls are needed).
+A  built-in HMAC-SHA1 (byte-accurate, RFC-style) is used to calculate the code from a shared secret (ie. no web API calls are needed, everything is entirely offline).
 
 To use this, simply download the page to your BlackBerry and launch it from the local file store using your BlackBerry built-in web browser.
 
