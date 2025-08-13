@@ -11,7 +11,7 @@ A global setting (timeOffset) is used to adjust the current time (in seconds) fo
 
 A “Clear All Accounts” link is available below the Add Account block. Clicking it will remove all saved accounts (i.e. clear the related localStorage entry).
 
-Each account row includes a small “Delete” link (shown to the right of the account name) so users can remove that account without clearing all data.
+Each account includes a small “Delete” link (shown to the right of the account name) so users can remove that account without clearing all data.
 
 A  built-in HMAC-SHA1 (byte-accurate, RFC-style) is used to calculate the code from a shared secret (ie. no web API calls are needed, everything is entirely offline).
 
