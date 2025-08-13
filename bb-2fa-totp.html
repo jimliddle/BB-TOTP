@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Authenticator</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <style type="text/css">
+    html, body { height: 100%; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, Helvetica, sans-serif; background:#f0f0f0; margin:0; padding:0; }
+
+    .container{
+      width:100%; max-width:980px; margin:8px auto; background:#fff; border-radius:8px;
+      box-shadow:0 2px 4px rgba(0,0,0,0.2); padding:16px;
+    }
+    h1{ text-align:center; font-size:26px; color:#4285f4; margin:6px 0 18px 0; }
+
+    .form-block{ margin-top:10px; }
+    .form-field{
+      width:100%; margin:0 0 10px 0; padding:10px; border:1px solid #ccc; border-radius:4px;
+      font-size:16px; height:42px; display:block;
+    }
+    .btn{
+      display:block; width:100%; height:46px; line-height:46px; padding:0 12px;
+      background:#4285f4; color:#fff; border:none; border-radius:4px; font-size:16px; cursor:pointer;
+      -webkit-appearance:none; appearance:none; overflow:visible;
+    }
+    .btn:hover{ background:#357ae8; }
+
+    .actions{ margin-top:10px; overflow:hidden; }
+    .actions .left{ float:left; }
+    .actions .right{ float:right; }
+    .link{ color:#4285f4; text-decoration:none; }
+    .link:hover{ text-decoration:underline; }
+    .actions:after{ content:""; display:block; clear:both; }
+
+    #offsetControl{ display:none; margin-top:10px; }
+    #timeOffsetInput{
+      width:220px; max-width:100%; padding:8px; border:1px solid #ccc; border-radius:4px;
+      font-size:15px; height:38px; margin-right:6px;
+    }
+    #setTimeOffsetButton{ height:38px; line-height:38px; }
+
+    .accounts-wrap{ margin-top:16px; }
+    .account{ border-top:1px solid #eee; padding:12px 0; position:relative; }
+    .account .name{ font-size:18px; color:#333; margin-right:60px; }
+    .account .delete{ position:absolute; right:8px; top:8px; font-size:12px; color:#4285f4; text-decoration:none; }
+    .account .delete:hover{ text-decoration:underline; }
+    .account .code{ font-size:40px; letter-spacing:2px; text-align:right; color:#000; line-height:1.1; }
+    .account .timer{ font-size:13px; color:#888; text-align:right; }
+
+    /* Simple modals (lock + password settings) */
+    .overlay{
+      position:fixed; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.35);
+      display:none; z-index:999;
+    }
+    .sheet{
+      width:95%; max-width:420px; margin:12% auto; background:#fff; border-radius:8px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.3); padding:16px;
+    }
+    .sheet h2{ margin:0 0 12px 0; font-size:20px; color:#333; text-align:center; }
+    .row-btns{ display:block; margin-top:8px; }
+    .btn-secondary{
+      display:block; width:100%; height:42px; line-height:42px; text-align:center; margin-top:8px;
+      background:#e0e0e0; color:#000; border:none; border-radius:4px; font-size:16px; cursor:pointer;
+      -webkit-appearance:none; appearance:none;
+    }
+    .hint{ font-size:12px; color:#666; margin-top:6px; text-align:center; }
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Authenticator</h1>
+
+    <!-- Add account form -->
+    <form id="addAccountForm" class="form-block">
+      <input type="text" id="accountName" class="form-field" placeholder="Account Name" required>
+      <input type="text" id="accountSecret" class="form-field" placeholder="Secret (Base32)" required>
+      <button id="addButton" type="submit" class="btn">Add Account</button>
+    </form>
+
+    <!-- Actions & toggles -->
+    <div class="actions">
+      <div class="left"><a href="#" id="clearAllLink" class="link">Clear All Accounts</a></div>
+      <div class="right">
+        <a href="#" id="passwordLink" class="link" style="margin-right:16px;">Password</a>
+        <a href="#" id="offsetLink" class="link">Offset</a>
+      </div>
+    </div>
+
+    <!-- Offset control -->
+    <div id="offsetControl">
+      <input type="number" id="timeOffsetInput" value="0" step="1">
+      <button id="setTimeOffsetButton" class="btn" type="button">Set Offset</button>
+    </div>
+
+    <!-- Accounts list (below form) -->
+    <div id="accounts" class="accounts-wrap"></div>
+  </div>
+
+  <!-- Unlock overlay -->
+  <div id="unlockOverlay" class="overlay">
+    <div class="sheet">
+      <h2>Unlock</h2>
+      <input type="password" id="unlockPassword" class="form-field" placeholder="Password">
+      <button id="unlockBtn" class="btn">Unlock</button>
+      <div id="unlockMsg" class="hint" style="color:#b00020; display:none;">Wrong password</div>
+    </div>
+  </div>
+
+  <!-- Password settings overlay -->
+  <div id="passOverlay" class="overlay">
+    <div class="sheet">
+      <h2>Password</h2>
+      <input type="password" id="setPass1" class="form-field" placeholder="New password (leave blank to disable)">
+      <input type="password" id="setPass2" class="form-field" placeholder="Confirm password">
+      <button id="savePassBtn" class="btn">Save</button>
+      <button id="cancelPassBtn" class="btn-secondary" type="button">Cancel</button>
+      <div class="hint">Adds a basic lock and obfuscates storage. Not strong cryptography.</div>
+    </div>
+  </div>
+
+  <script type="text/javascript">
+    /* ===== ES5 ONLY – offline, with simple password lock ===== */
+
+    /* ---------- Small helpers ---------- */
+    var timeOffset = 0; // you asked to start with no offset
+    function leftpad(str, len, pad){ str=String(str); while(str.length<len){str=pad+str;} return str; }
+    function bytesToHex(a){ for(var i=0,s="";i<a.length;i++){ s+=leftpad(a[i].toString(16),2,'0'); } return s; }
+    function hexToBytes(h){ var a=[], i; for(i=0;i<h.length;i+=2){ a.push(parseInt(h.substr(i,2),16)); } return a; }
+
+    // Very light PRNG for salt (deterrent only)
+    function randomBytes(n){ var a=[], i; for(i=0;i<n;i++){ a.push(Math.floor(Math.random()*256)); } return a; }
+
+    function utf8encode(s){
+      var out=[], i, c;
+      for(i=0;i<s.length;i++){
+        c=s.charCodeAt(i);
+        if(c<128){ out.push(c); }
+        else if(c<2048){ out.push((c>>6)|192, (c&63)|128); }
+        else{ out.push((c>>12)|224, ((c>>6)&63)|128, (c&63)|128); }
+      }
+      return out;
+    }
+    function utf8decode(a){
+      var i=0, out="", c, c2, c3;
+      while(i<a.length){
+        c=a[i++];
+        if(c<128){ out+=String.fromCharCode(c); }
+        else if(c>191 && c<224){ c2=a[i++]; out+=String.fromCharCode(((c&31)<<6)|(c2&63)); }
+        else{ c2=a[i++]; c3=a[i++]; out+=String.fromCharCode(((c&15)<<12)|((c2&63)<<6)|(c3&63)); }
+      }
+      return out;
+    }
+
+    /* ---------- Base32 decode ---------- */
+    function base32ToBytes(s){
+      var map="ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      var bits="", out=[], i, v, b;
+      s = s.replace(/[\s=]/g,"").toUpperCase();
+      for(i=0;i<s.length;i++){
+        v = map.indexOf(s.charAt(i));
+        if(v<0) continue;
+        bits += leftpad(v.toString(2),5,'0');
+        while(bits.length>=8){
+          b = bits.substr(0,8); bits = bits.substr(8);
+          out.push(parseInt(b,2));
+        }
+      }
+      return out;
+    }
+
+    /* ---------- SHA-1 + HMAC-SHA1 over bytes ---------- */
+    function sha1(bytes){
+      var i,j,t,w=new Array(80),H0=0x67452301,H1=0xEFCDAB89,H2=0x98BADCFE,H3=0x10325476,H4=0xC3D2E1F0;
+      var ml=bytes.length, withOne=bytes.slice(0); withOne.push(0x80);
+      while((withOne.length%64)!==56){ withOne.push(0); }
+      var bitLenHi=Math.floor((ml*8)/0x100000000), bitLenLo=(ml*8)>>>0;
+      withOne.push((bitLenHi>>>24)&255,(bitLenHi>>>16)&255,(bitLenHi>>>8)&255,bitLenHi&255,
+                   (bitLenLo>>>24)&255,(bitLenLo>>>16)&255,(bitLenLo>>>8)&255,bitLenLo&255);
+      for(i=0;i<withOne.length;i+=64){
+        for(j=0;j<16;j++){ w[j]=(withOne[i+4*j]<<24)|(withOne[i+4*j+1]<<16)|(withOne[i+4*j+2]<<8)|(withOne[i+4*j+3]); }
+        for(j=16;j<80;j++){ t=w[j-3]^w[j-8]^w[j-14]^w[j-16]; w[j]=((t<<1)|(t>>>31))>>>0; }
+        var a=H0,b=H1,c=H2,d=H3,e=H4,f,k,temp;
+        for(j=0;j<80;j++){
+          if(j<20){ f=(b&c)|((~b)&d); k=0x5A827999; }
+          else if(j<40){ f=b^c^d; k=0x6ED9EBA1; }
+          else if(j<60){ f=(b&c)|(b&d)|(c&d); k=0x8F1BBCDC; }
+          else { f=b^c^d; k=0xCA62C1D6; }
+          temp=(((a<<5)|(a>>>27))+f+e+k+w[j])>>>0;
+          e=d; d=c; c=((b<<30)|(b>>>2))>>>0; b=a; a=temp;
+        }
+        H0=(H0+a)>>>0; H1=(H1+b)>>>0; H2=(H2+c)>>>0; H3=(H3+d)>>>0; H4=(H4+e)>>>0;
+      }
+      var out=[]; function push32(x){ out.push((x>>>24)&255,(x>>>16)&255,(x>>>8)&255,x&255); }
+      push32(H0); push32(H1); push32(H2); push32(H3); push32(H4); return out;
+    }
+    function hmac_sha1(keyBytes,msgBytes){
+      var block=64,i;
+      if(keyBytes.length>block){ keyBytes=sha1(keyBytes); }
+      var k=keyBytes.slice(0); while(k.length<block){ k.push(0); }
+      var o=[], iPad=[];
+      for(i=0;i<block;i++){ iPad[i]=k[i]^0x36; o[i]=k[i]^0x5c; }
+      var inner=iPad.concat(msgBytes);
+      var innerHash=sha1(inner);
+      var outer=o.concat(innerHash);
+      return sha1(outer);
+    }
+
+    /* ---------- TOTP ---------- */
+    function getTOTP(secret){
+      var epoch=Math.floor((new Date().getTime()+timeOffset*1000)/1000);
+      var counter=Math.floor(epoch/30);
+      var hi=Math.floor(counter/0x100000000), lo=(counter>>>0);
+      var msg=[(hi>>>24)&255,(hi>>>16)&255,(hi>>>8)&255,hi&255,(lo>>>24)&255,(lo>>>16)&255,(lo>>>8)&255,lo&255];
+      var key=base32ToBytes(secret);
+      var h=hmac_sha1(key,msg);
+      var offset=h[19]&0x0f;
+      var binCode=((h[offset]&0x7f)<<24)|((h[offset+1]&255)<<16)|((h[offset+2]&255)<<8)|(h[offset+3]&255);
+      var code=binCode%1000000;
+      return leftpad(code,6,'0');
+    }
+
+    /* ---------- Simple storage obfuscation for password mode ---------- */
+    // Derive 20-byte key from password + salt (SHA-1 iterated 10000 times)
+    function deriveKey(passBytes, saltBytes){
+      var i, d = saltBytes.concat(passBytes);
+      var k = sha1(d);
+      for(i=0;i<9999;i++){ k = sha1(k.concat(passBytes)); }
+      return k; // 20 bytes
+    }
+    // XOR stream using SHA-1(key || salt || counter)
+    function xorStream(dataBytes, keyBytes, saltBytes){
+      var out=[], i=0, counter=0, block, material;
+      while(i<dataBytes.length){
+        material = keyBytes.concat(saltBytes).concat([
+          (counter>>>24)&255,(counter>>>16)&255,(counter>>>8)&255,counter&255
+        ]);
+        block = sha1(material); // 20 bytes
+        for(var j=0;j<block.length && i<dataBytes.length; j++, i++){
+          out.push(dataBytes[i] ^ block[j]);
+        }
+        counter++;
+      }
+      return out;
+    }
+
+    function encryptAccounts(jsonStr, pass){
+      var salt = randomBytes(8);
+      var key  = deriveKey(utf8encode(pass), salt); // 20 bytes
+      var pt   = utf8encode(jsonStr);
+      var ct   = xorStream(pt, key, salt); // bytes
+      localStorage.setItem("auth_accounts_enc", bytesToHex(ct));
+      localStorage.setItem("auth_salt", bytesToHex(salt));
+      localStorage.setItem("auth_locked", "1");
+      localStorage.removeItem("auth_accounts"); // remove plaintext
+    }
+    function decryptAccounts(pass){
+      var saltHex = localStorage.getItem("auth_salt");
+      var ctHex   = localStorage.getItem("auth_accounts_enc");
+      if(!saltHex || !ctHex){ return null; }
+      var salt = hexToBytes(saltHex);
+      var key  = deriveKey(utf8encode(pass), salt);
+      var ct   = hexToBytes(ctHex);
+      var pt   = xorStream(ct, key, salt);
+      try{ return JSON.parse(utf8decode(pt)); }catch(e){ return null; }
+    }
+    function disablePassword(){
+      localStorage.removeItem("auth_accounts_enc");
+      localStorage.removeItem("auth_salt");
+      localStorage.removeItem("auth_locked");
+    }
+    function isLocked(){ return localStorage.getItem("auth_locked")==="1"; }
+
+    /* ---------- App state & UI ---------- */
+    var accounts = [];
+
+    function loadAccounts(){
+      if(isLocked()){ return false; } // wait for unlock
+      var s=localStorage.getItem("auth_accounts");
+      if(s){ accounts=JSON.parse(s); }
+      return true;
+    }
+    function saveAccounts(){
+      // If locked, keep encrypted copy updated too (if a password exists)
+      if(isLocked()){
+        var pass = sessionPassword; // saved when you unlock
+        if(pass){ encryptAccounts(JSON.stringify(accounts), pass); }
+      }else{
+        localStorage.setItem("auth_accounts", JSON.stringify(accounts));
+      }
+    }
+    function addAccount(name, secret){ accounts.push({name:name, secret:secret}); saveAccounts(); renderAccounts(); }
+    function deleteAccount(i){ accounts.splice(i,1); saveAccounts(); renderAccounts(); }
+    function clearAllAccounts(){
+      accounts=[]; localStorage.removeItem("auth_accounts");
+      localStorage.removeItem("auth_accounts_enc");
+      renderAccounts();
+    }
+
+    function renderAccounts(){
+      var c=document.getElementById("accounts"); c.innerHTML="";
+      var i, acc, div, nameDiv, del, codeDiv, timerDiv;
+      for(i=0;i<accounts.length;i++){
+        acc=accounts[i];
+        div=document.createElement("div"); div.className="account";
+        nameDiv=document.createElement("div"); nameDiv.className="name"; nameDiv.appendChild(document.createTextNode(acc.name));
+        del=document.createElement("a"); del.href="#"; del.className="delete"; del.appendChild(document.createTextNode("Delete"));
+        del.onclick=(function(ix){ return function(e){ e.preventDefault(); deleteAccount(ix); }; })(i);
+        codeDiv=document.createElement("div"); codeDiv.className="code"; codeDiv.id="code_"+i;
+        codeDiv.appendChild(document.createTextNode(getTOTP(acc.secret)));
+        timerDiv=document.createElement("div"); timerDiv.className="timer"; timerDiv.id="timer_"+i;
+        div.appendChild(nameDiv); div.appendChild(del); div.appendChild(codeDiv); div.appendChild(timerDiv); c.appendChild(div);
+      }
+    }
+
+    function updateCodes(){
+      var epoch=Math.floor((new Date().getTime()+timeOffset*1000)/1000);
+      var remaining=30-(epoch%30);
+      var i, codeDiv, timerDiv;
+      for(i=0;i<accounts.length;i++){
+        codeDiv=document.getElementById("code_"+i);
+        timerDiv=document.getElementById("timer_"+i);
+        if(codeDiv && timerDiv){
+          if(remaining===30){ codeDiv.innerHTML=getTOTP(accounts[i].secret); }
+          timerDiv.innerHTML="Expires in: "+remaining+"s";
+        }
+      }
+    }
+
+    /* ---------- Add form handlers ---------- */
+    function handleAdd(e){
+      if(e){ if(e.preventDefault) e.preventDefault(); e.returnValue=false; }
+      var name=document.getElementById("accountName").value.replace(/^\s+|\s+$/g,"");
+      var secret=document.getElementById("accountSecret").value.replace(/\s+/g,"");
+      if(name && secret){
+        addAccount(name, secret);
+        document.getElementById("accountName").value="";
+        document.getElementById("accountSecret").value="";
+        document.getElementById("accountName").focus();
+      }
+      return false;
+    }
+    document.getElementById("addAccountForm").onsubmit=handleAdd;
+    document.getElementById("addButton").onclick=handleAdd;
+
+    document.getElementById("clearAllLink").onclick=function(e){ e.preventDefault(); if(confirm("Are you sure you want to clear all accounts?")) clearAllAccounts(); };
+    document.getElementById("offsetLink").onclick=function(e){ e.preventDefault(); var oc=document.getElementById("offsetControl"); oc.style.display=(oc.style.display==="block")?"none":"block"; };
+
+    /* ---------- Password UI ---------- */
+    var sessionPassword = null; // kept only in memory until page closed
+
+    function show(el){ el.style.display="block"; }
+    function hide(el){ el.style.display="none"; }
+
+    document.getElementById("passwordLink").onclick=function(e){
+      e.preventDefault();
+      // open settings; if already locked & unlocked, you can change/disable
+      document.getElementById("setPass1").value="";
+      document.getElementById("setPass2").value="";
+      show(document.getElementById("passOverlay"));
+    };
+    document.getElementById("cancelPassBtn").onclick=function(){ hide(document.getElementById("passOverlay")); };
+
+    document.getElementById("savePassBtn").onclick=function(){
+      var p1=document.getElementById("setPass1").value;
+      var p2=document.getElementById("setPass2").value;
+      if(p1!==p2){ alert("Passwords do not match."); return; }
+
+      if(p1===""){ // disable password
+        disablePassword();
+        if(accounts && accounts.length){ localStorage.setItem("auth_accounts", JSON.stringify(accounts)); }
+        hide(document.getElementById("passOverlay"));
+        alert("Password disabled.");
+        return;
+      }
+      // enable/update password: encrypt current accounts and mark locked for next launch
+      sessionPassword = p1;
+      encryptAccounts(JSON.stringify(accounts||[]), sessionPassword);
+      alert("Password set. You will be asked to unlock next time you open the page.");
+      hide(document.getElementById("passOverlay"));
+    };
+
+    /* ---------- Unlock flow on load ---------- */
+    function attemptUnlock(){
+      var pass=document.getElementById("unlockPassword").value;
+      var data=decryptAccounts(pass);
+      if(data===null){ document.getElementById("unlockMsg").style.display="block"; return; }
+      sessionPassword = pass; // keep for this session so we can re-encrypt after edits
+      accounts = data || [];
+      // write back a fresh encrypted blob (no-op but keeps things tidy)
+      encryptAccounts(JSON.stringify(accounts), sessionPassword);
+      hide(document.getElementById("unlockOverlay"));
+      renderAccounts();
+    }
+    document.getElementById("unlockBtn").onclick=function(){ attemptUnlock(); };
+    document.getElementById("unlockPassword").onkeypress=function(e){ e=e||window.event; if(e.keyCode===13){ attemptUnlock(); return false; } };
+
+    // Init
+    if(isLocked()){
+      // hide plaintext list, show unlock
+      show(document.getElementById("unlockOverlay"));
+    }else{
+      loadAccounts();
+      renderAccounts();
+    }
+    setInterval(updateCodes, 1000);
+
+    // Offset control
+    document.getElementById("setTimeOffsetButton").onclick=function(){
+      var v=parseInt(document.getElementById("timeOffsetInput").value,10);
+      if(isNaN(v)) v=0;
+      timeOffset=v;
+      renderAccounts(); updateCodes();
+    };
+  </script>
+</body>
+</html>
